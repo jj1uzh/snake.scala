@@ -1,36 +1,26 @@
 import scala.util.chaining.scalaUtilChainingOps
 import scala.language.postfixOps
-import scala.concurrent.{Await, ExecutionContext, Future, TimeoutException}
-import scala.concurrent.duration.DurationInt
-import scala.annotation.tailrec
-import scala.util.{Try, Success, Failure}
-import javax.swing._
+import javax.swing.{JFrame, JPanel, JLabel, Timer, AbstractAction, WindowConstants}
 import java.awt.event.{KeyEvent, KeyListener, ActionEvent}
-import java.awt.event.KeyEvent._
-import java.awt.{Font, Graphics, Color, Rectangle, Dimension}
-import java.util.concurrent.LinkedBlockingQueue
+import java.awt.{Font, Graphics, Color, Dimension}
 
-sealed trait Direction {
-  def reversed: Direction = this match {
-    case Up => Down
-    case Right => Left
-    case Left => Right
-    case Down => Up
-  }
-}
+sealed trait Command
+sealed trait Direction { def reversed: Direction }
+case object NewGame extends Command
+case object Quit extends Command
+case object Up extends Direction with Command { def reversed = Down }
+case object Right extends Direction with Command { def reversed = Left }
+case object Left extends Direction with Command { def reversed = Right }
+case object Down extends Direction with Command { def reversed = Up }
 
-case object Up extends Direction
-case object Right extends Direction
-case object Left extends Direction
-case object Down extends Direction
-
-object Direction{
-  def fromKeyCode(n: Int): Option[Direction] = n match {
-    case VK_DOWN => Some(Down)
-    case VK_LEFT => Some(Left)
-    case VK_RIGHT => Some(Right)
-    case VK_UP => Some(Up)
-    case _ => None
+object Command {
+  def fromKeyChar: PartialFunction[Char, Command] = {
+    case 'n' => NewGame
+    case 'q' => Quit
+    case 'h' => Left
+    case 'j' => Down
+    case 'k' => Up
+    case 'l' => Right
   }
 }
 
@@ -58,18 +48,12 @@ case class World(snake: List[Pos], snakeDir: Direction, applePos: Pos) {
   def next(snakeDir: Direction = this.snakeDir): Option[World] = {
     val nextSnakeTail = snake dropRight 1
     val nextSnakeHead = snake.head moved snakeDir
-    if ((nextSnakeTail contains nextSnakeHead) ||
-        (World.walls contains nextSnakeHead)) {
+    if ((nextSnakeTail contains nextSnakeHead) || (World.walls contains nextSnakeHead))
       None
-    } else if (nextSnakeHead == applePos) {
-      Some(World(
-        nextSnakeHead::snake, snakeDir, newApplePos
-      ))
-    } else {
-      Some(World(
-        nextSnakeHead::nextSnakeTail, snakeDir, applePos
-      ))
-    }
+    else if (nextSnakeHead == applePos)
+      Some(World(nextSnakeHead::snake, snakeDir, newApplePos))
+    else
+      Some(World(nextSnakeHead::nextSnakeTail, snakeDir, applePos))
   }
 }
 
@@ -97,66 +81,16 @@ object World {
 }
 
 object Main extends App {
-  import ExecutionContext.Implicits.global
   var world: World = World.newWorld
   var state: State = OnGoing
-  def gridSize = 30
-  def snakeSpeed = 200
-  def refreshInterval = 50
+  val gridSize = 30
+  val snakeSpeed = 200
   
   def draw(g: Graphics, edgeColor: Color, fillColor: Color)(pos: Pos): Unit = {
     g setColor fillColor
     g.fillRect(pos.x * gridSize, pos.y * gridSize, gridSize, gridSize)
     g setColor edgeColor
     g.drawRect(pos.x * gridSize, pos.y * gridSize, gridSize, gridSize)
-  }
-
-  def panel = new JPanel() with KeyListener {
-    locally {
-      addKeyListener(this)
-      setFocusable(true)
-      setBackground(Color.GRAY)
-      setSize(new Dimension(gridSize * World.WIDTH, gridSize * World.HEIGHT))
-      repainter.start()
-    }
-    def repainter = new Timer(refreshInterval, new AbstractAction() {
-      def actionPerformed(e: ActionEvent): Unit = {
-        repaint()
-      }
-    })
-    override def paintComponent(g: Graphics): Unit = {
-      super.paintComponent(g)
-      val w = world
-      World.walls foreach draw(g, Color.BLACK, Color.BLACK)
-      World.floors foreach draw(g, Color.BLACK, Color.GRAY)
-      w.snake foreach draw(g, Color.ORANGE, Color.YELLOW)
-      w.applePos tap draw(g, Color.RED, Color.RED)
-    }
-    def keyReleased(e: KeyEvent) = ()
-    def keyTyped(e: KeyEvent) = onKeyTyped(e)
-    def keyPressed(e: KeyEvent): Unit = onKeyEvent(e)
-  }
-
-  val scoreLabel = new JLabel {
-    locally {
-      setText("Hello")
-      setForeground(Color.BLUE)
-      val curFont = getFont
-      setFont(new Font(curFont.getName, Font.BOLD, 20))
-    }
-  }
-
-  def top = new JFrame() {
-    locally {
-      setTitle("snake.scala")
-      setLayout(null)
-      setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE)
-      val pane = getContentPane
-      pane add panel
-      pane add scoreLabel
-      scoreLabel.setBounds(0, panel.getHeight, panel.getWidth, gridSize)
-      setSize(new Dimension(panel.getWidth, panel.getHeight + scoreLabel.getHeight*2))
-    }
   }
 
   def updateWorld(w: Option[World]): Unit = synchronized {
@@ -172,27 +106,6 @@ object Main extends App {
     }
   }
 
-  def onKeyEvent(ev: KeyEvent): Unit = {
-    val snakeDir = world.snakeDir
-    for (
-      dir <- Direction fromKeyCode ev.getKeyCode;
-      if dir != snakeDir.reversed & dir != snakeDir & state == OnGoing
-    ) {
-      tick.stop()
-      updateWorld(world next dir)
-      tick.restart()
-    }
-  }
-
-  def onKeyTyped(ev: KeyEvent): Unit = {
-    tick.stop()
-    ev.getKeyChar match {
-      case 'n' => updateWorld(Some(World.newWorld))
-      case 'q' => System.exit(0)
-    }
-    tick.restart()
-  }
-
   val tick = new Timer(snakeSpeed, new AbstractAction() {
     def actionPerformed(e: ActionEvent): Unit = {
       if (state == OnGoing) {
@@ -201,6 +114,71 @@ object Main extends App {
     }
   })
 
-  top setVisible true
+  val keyListener = new KeyListener {
+    def keyPressed(e: KeyEvent) = ()
+    def keyReleased(e: KeyEvent) = ()
+
+    val commandOf = Command.fromKeyChar.lift
+    def keyTyped(e: KeyEvent): Unit =
+      commandOf(e.getKeyChar) foreach (_ match {
+        case NewGame => updateWorld(Some(World.newWorld))
+        case Quit => System.exit(0)
+        case dir: Direction if state == OnGoing =>
+          val curDir = world.snakeDir
+          if (dir != curDir && dir != curDir.reversed) {
+            tick.stop()
+            updateWorld(world next dir)
+            tick.restart()
+          }
+        case _ => ()
+      })
+  }
+
+  val panel = new JPanel {
+    locally {
+      addKeyListener(keyListener)
+      setFocusable(true)
+      setBackground(Color.GRAY)
+      setSize(new Dimension(gridSize * World.WIDTH, gridSize * World.HEIGHT))
+      repainter.start()
+    }
+
+    def repainter = new Timer(50, new AbstractAction() {
+      def actionPerformed(e: ActionEvent): Unit = {
+        repaint()
+      }
+    })
+
+    override def paintComponent(g: Graphics): Unit = {
+      super.paintComponent(g)
+      World.walls foreach draw(g, Color.BLACK, Color.BLACK)
+      World.floors foreach draw(g, Color.BLACK, Color.GRAY)
+      world.snake foreach draw(g, Color.ORANGE, Color.YELLOW)
+      world.applePos tap draw(g, Color.RED, Color.RED)
+    }
+  }
+
+  val scoreLabel = new JLabel("Snake") {
+    locally {
+      setForeground(Color.BLUE)
+      val curFont = getFont
+      setFont(new Font(curFont.getName, Font.BOLD, 30))
+    }
+  }
+
+  val topFrame = new JFrame() {
+    locally {
+      setTitle("snake.scala")
+      setLayout(null)
+      setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE)
+      val pane = getContentPane
+      pane add panel
+      pane add scoreLabel
+      scoreLabel.setBounds(0, panel.getHeight, panel.getWidth, gridSize)
+      setSize(new Dimension(panel.getWidth, panel.getHeight + scoreLabel.getHeight*2))
+      setVisible(true)
+    }
+  }
+
   tick.start()
 }
