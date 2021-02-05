@@ -1,5 +1,6 @@
 import scala.util.chaining.scalaUtilChainingOps
 import scala.language.postfixOps
+import scala.sys.process.stringToProcess
 import javax.swing.{JFrame, JPanel, JLabel, Timer, AbstractAction, WindowConstants}
 import java.awt.event.{KeyEvent, KeyListener, ActionEvent}
 import java.awt.{Font, Graphics, Color, Dimension}
@@ -81,6 +82,8 @@ object World {
 }
 
 object Main extends App {
+  println("Welcome to SNAKE.SCALA 0.2 (2020-02-05)\n")
+
   var world: World = World.newWorld
   var state: State = OnGoing
   val gridSize = 30
@@ -101,8 +104,9 @@ object Main extends App {
         scoreLabel setText (w.snake.length - 5).toString
       case None =>
         state = Over
-        val score = scoreLabel.getText
-        scoreLabel setText s"GAME GAME  score:$score (n)ew (q)uit"
+        val score = scoreLabel.getText.toInt
+        val scoreSaved = s"./add-score.sh $score".! == 0
+        scoreLabel setText s"GAME GAME $score [n/q] ${if (!scoreSaved) " !Failed to save score" else ""}"
     }
   }
 
@@ -121,8 +125,12 @@ object Main extends App {
     val commandOf = Command.fromKeyChar.lift
     def keyTyped(e: KeyEvent): Unit =
       commandOf(e.getKeyChar) foreach (_ match {
-        case NewGame => updateWorld(Some(World.newWorld))
-        case Quit => System.exit(0)
+        case NewGame =>
+          updateWorld(Some(World.newWorld))
+        case Quit =>
+          "cat score.txt".!
+          println("Bye.")
+          System.exit(0)
         case dir: Direction if state == OnGoing =>
           val curDir = world.snakeDir
           if (dir != curDir && dir != curDir.reversed) {
