@@ -3,6 +3,7 @@ import scala.language.postfixOps
 import scala.sys.process.stringToProcess
 import javax.swing.{JFrame, JPanel, JLabel, Timer, AbstractAction, WindowConstants}
 import java.awt.event.{KeyEvent, KeyListener, ActionEvent}
+import java.awt.event.KeyEvent.{VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT}
 import java.awt.{Font, Graphics, Color, Dimension}
 
 sealed trait Command
@@ -15,14 +16,21 @@ case object Left extends Direction with Command { def reversed = Right }
 case object Down extends Direction with Command { def reversed = Up }
 
 object Command {
-  def fromKeyChar: PartialFunction[Char, Command] = {
-    case 'n' => NewGame
-    case 'q' => Quit
-    case 'h' => Left
-    case 'j' => Down
-    case 'k' => Up
-    case 'l' => Right
-  }
+  val fromChar = Map(
+    'n' -> NewGame,
+    'q' -> Quit,
+    'h' -> Left,
+    'j' -> Down,
+    'k' -> Up,
+    'l' -> Right
+  ).lift
+
+  val fromCode = Map(
+    VK_UP -> Up,
+    VK_DOWN -> Down,
+    VK_RIGHT -> Right,
+    VK_LEFT -> Left
+  ).lift
 }
 
 sealed trait State
@@ -119,12 +127,16 @@ object Main extends App {
   })
 
   val keyListener = new KeyListener {
-    def keyPressed(e: KeyEvent) = ()
     def keyReleased(e: KeyEvent) = ()
 
-    val commandOf = Command.fromKeyChar.lift
+    def keyPressed(e: KeyEvent): Unit =
+      Command fromCode e.getKeyCode foreach onCommand
+
     def keyTyped(e: KeyEvent): Unit =
-      commandOf(e.getKeyChar) foreach (_ match {
+      Command fromChar e.getKeyChar foreach onCommand
+
+    def onCommand(c: Command): Unit =
+      c match {
         case NewGame =>
           updateWorld(Some(World.newWorld))
         case Quit =>
@@ -139,7 +151,7 @@ object Main extends App {
             tick.restart()
           }
         case _ => ()
-      })
+      }
   }
 
   val panel = new JPanel {
